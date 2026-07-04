@@ -1,13 +1,24 @@
+# Python
 .venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 dist/
-.env
-*.egg-info
+*.egg-info/
 .coverage
+.env
 
 .claude/
-docs/*.md
-*.md
+CLAUDE.md
+PROGRESS.md
+RULES.md
+NOTES.md
+TODO.md
+SCRATCH.md
+ARCHITECTURE.md
+
+SPEC.md
+ROADMAP.md
+docs/
