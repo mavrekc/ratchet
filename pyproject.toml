@@ -16,6 +16,7 @@ dev = [
     "ruff",
     "mypy",
     "pre-commit",
+    "hypothesis",
 ]
 
 [build-system]
@@ -35,3 +36,6 @@ files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: requires a running Redis (docker compose up -d redis)",
+]
