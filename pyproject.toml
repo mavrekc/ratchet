@@ -1,6 +1,6 @@
 [project]
 name = "ratchet"
-version = "0.0.1"
+version = "0.1.0"
 description = "Agents that survive kill -9: a durable, queue-native runtime for AI agents."
 requires-python = ">=3.12"
 license = "Apache-2.0"
