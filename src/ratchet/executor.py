@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ValidationError
 from redis import Redis
 
 from ratchet.broker import Broker, Message
-from ratchet.errors import UnknownStepError
+from ratchet.errors import ChainForkError, UnknownStepError
 from ratchet.eventlog import EventLog
 from ratchet.events import EventType, JsonValue, canonical_json, sha256_hex
 from ratchet.steps import STEP_REGISTRY, StepFn
@@ -62,7 +62,9 @@ def make_step_message(
 ) -> StepMessage:
     args_dict = dict(args)
     idempotency_key = sha256_hex(
-        canonical_json({"session_id": session_id, "step_id": step_id, "args": args_dict})
+        canonical_json(
+            {"session_id": session_id, "step_id": step_id, "tool": tool, "args": args_dict}
+        )
     )
     return StepMessage(
         session_id=session_id,
@@ -99,8 +101,13 @@ class Worker:
         return len(messages)
 
     def run_forever(self, block_ms: int = 5000) -> None:
+        # A lost same-session append race must not kill the worker; the message
+        # stays unacked in the PEL for R2's claim path. BrokerError still exits.
         while not self._stop_event.is_set():
-            self.run_once(block_ms=block_ms)
+            try:
+                self.run_once(block_ms=block_ms)
+            except ChainForkError as e:
+                logger.error("chain fork, message left pending: %s", e)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -145,6 +152,8 @@ class Worker:
             )
         else:
             log.append(EventType.TOOL_RESULT, {"step_id": step.step_id, "result": result})
+            # R1 contract: one step per session task, so task_done follows each
+            # successful step. Task-boundary semantics arrive with R2 checkpoints.
             log.append(EventType.TASK_DONE, {"step_id": step.step_id})
 
         # ack-on-failure is interim until R2 DLQ/claim + R3 retry exist; without a

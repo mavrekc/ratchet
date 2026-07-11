@@ -38,6 +38,8 @@ class RedisStreamsBroker:
         stream: str = DEFAULT_STEP_STREAM,
         group: str = DEFAULT_WORKER_GROUP,
     ) -> None:
+        if not redis.get_connection_kwargs().get("decode_responses"):
+            raise ValueError("RedisStreamsBroker requires a client with decode_responses=True")
         self._redis = redis
         self._stream = stream
         self._group = group

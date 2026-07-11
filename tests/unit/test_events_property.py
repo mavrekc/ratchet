@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 from hypothesis import given, settings
@@ -41,8 +42,9 @@ def test_canonical_json_key_order_independent(payload: dict[str, JsonValue]) -> 
 
 @given(json_values)
 @settings(deadline=None)
-def test_canonical_json_deterministic(value: JsonValue) -> None:
-    assert canonical_json(value) == canonical_json(value)
+def test_canonical_json_fixpoint(value: JsonValue) -> None:
+    encoded = canonical_json(value)
+    assert canonical_json(json.loads(encoded)) == encoded
 
 
 @given(json_payloads, event_types)

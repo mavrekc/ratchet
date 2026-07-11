@@ -23,9 +23,11 @@ def test_idempotency_key_varies_with_args() -> None:
     base = make_step_message("sess-1", "step-1", "echo", {"a": 1})
     diff_args = make_step_message("sess-1", "step-1", "echo", {"a": 2})
     diff_step = make_step_message("sess-1", "step-2", "echo", {"a": 1})
+    diff_tool = make_step_message("sess-1", "step-1", "sleep", {"a": 1})
 
     assert base.idempotency_key != diff_args.idempotency_key
     assert base.idempotency_key != diff_step.idempotency_key
+    assert base.idempotency_key != diff_tool.idempotency_key
 
 
 def test_from_fields_rejects_missing_tool() -> None:

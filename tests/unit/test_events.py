@@ -18,8 +18,8 @@ from ratchet.events import (
 def test_canonical_json_stable_unicode() -> None:
     payload = {"note": "line\u2028separator and accent é", "emoji": "\U0001f680"}
     first = canonical_json(payload)
-    second = canonical_json(payload)
-    assert first == second
+    reordered = canonical_json(dict(reversed(list(payload.items()))))
+    assert first == reordered
 
     event = make_event(
         "sess-unicode", 0, EventType.TASK_STARTED, payload, GENESIS_PREV_HASH, datetime.now(UTC)

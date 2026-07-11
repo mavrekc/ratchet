@@ -34,16 +34,26 @@ if #tail == 0 then
     if prev_hash ~= genesis then
         return redis.error_reply('RATCHET_FORK: expected genesis prev_hash on empty log')
     end
+    if tonumber(seq) ~= 0 then
+        return redis.error_reply('RATCHET_FORK: first event must have seq 0')
+    end
 else
     local fields = tail[1][2]
     local tail_hash = nil
+    local tail_seq = nil
     for i = 1, #fields, 2 do
         if fields[i] == 'hash' then
             tail_hash = fields[i + 1]
         end
+        if fields[i] == 'seq' then
+            tail_seq = fields[i + 1]
+        end
     end
     if tail_hash ~= prev_hash then
         return redis.error_reply('RATCHET_FORK: tail hash does not match prev_hash')
+    end
+    if tonumber(seq) ~= tonumber(tail_seq) + 1 then
+        return redis.error_reply('RATCHET_FORK: seq does not continue the tail')
     end
 end
 
@@ -55,6 +65,8 @@ class EventLog:
     """Append-only, hash-chained event log for a single session."""
 
     def __init__(self, redis: Redis, session_id: str, prefix: str = DEFAULT_LOG_PREFIX) -> None:
+        if not redis.get_connection_kwargs().get("decode_responses"):
+            raise ValueError("EventLog requires a Redis client with decode_responses=True")
         self._redis = redis
         self._session_id = session_id
         self._prefix = prefix

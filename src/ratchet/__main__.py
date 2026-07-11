@@ -17,8 +17,6 @@ from ratchet.eventlog import EventLog
 from ratchet.events import EventType
 from ratchet.executor import Worker, make_step_message
 
-TERMINAL_TYPES = {EventType.TASK_DONE, EventType.STEP_FAILED}
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -50,7 +48,10 @@ def main() -> int:
         for worker in workers
     ]
 
+    stop_requested = threading.Event()
+
     def handle_signal(signum: int, frame: FrameType | None) -> None:
+        stop_requested.set()
         for worker in workers:
             worker.stop()
 
@@ -60,14 +61,21 @@ def main() -> int:
         thread.start()
 
     done: set[str] = set()
+    failed: set[str] = set()
     deadline = time.monotonic() + args.timeout
-    while time.monotonic() < deadline and len(done) < len(session_ids):
+    while (
+        time.monotonic() < deadline
+        and len(done) + len(failed) < len(session_ids)
+        and not stop_requested.is_set()
+    ):
         for session_id in session_ids:
-            if session_id in done:
+            if session_id in done or session_id in failed:
                 continue
             types = {event.type for event in EventLog(redis, session_id).read()}
-            if types & TERMINAL_TYPES:
+            if EventType.TASK_DONE in types:
                 done.add(session_id)
+            elif EventType.STEP_FAILED in types:
+                failed.add(session_id)
         time.sleep(0.2)
 
     for worker in workers:
@@ -78,12 +86,22 @@ def main() -> int:
     for session_id in session_ids:
         log = EventLog(redis, session_id)
         log.verify()
+        if session_id in done:
+            status = "done"
+        elif session_id in failed:
+            status = "failed"
+        else:
+            status = "incomplete"
         chain = ",".join(event.type.value for event in log.read())
-        print(f"session={session_id} chain=verified events={chain}")
+        print(f"session={session_id} status={status} chain=verified events={chain}")
 
-    print(f"sessions={len(session_ids)} completed={len(done)} workers={args.workers}")
+    incomplete = len(session_ids) - len(done) - len(failed)
+    print(
+        f"sessions={len(session_ids)} done={len(done)} failed={len(failed)} "
+        f"incomplete={incomplete} workers={args.workers}"
+    )
     if len(done) != len(session_ids):
-        print("demo FAILED: timed out before all sessions completed", file=sys.stderr)
+        print("demo FAILED: not every session completed successfully", file=sys.stderr)
         return 1
     print("all session event chains verified")
     return 0

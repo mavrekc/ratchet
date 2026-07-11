@@ -82,17 +82,17 @@ Output from a real run - two workers drain five sessions from the consumer group
 step's lifecycle to its session's hash-chained event log, and verify every chain:
 
 ```
-INFO ratchet.executor session_id=demo-de329c4a-0 step_id=step-0 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-de329c4a-1 step_id=step-1 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-de329c4a-2 step_id=step-2 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-de329c4a-3 step_id=step-3 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-de329c4a-4 step_id=step-4 tool=echo outcome=ok
-session=demo-de329c4a-0 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-de329c4a-1 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-de329c4a-2 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-de329c4a-3 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-de329c4a-4 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-sessions=5 completed=5 workers=2
+INFO ratchet.executor session_id=demo-e0d1f2c5-0 step_id=step-0 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-e0d1f2c5-1 step_id=step-1 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-e0d1f2c5-2 step_id=step-2 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-e0d1f2c5-3 step_id=step-3 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-e0d1f2c5-4 step_id=step-4 tool=echo outcome=ok
+session=demo-e0d1f2c5-0 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-e0d1f2c5-1 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-e0d1f2c5-2 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-e0d1f2c5-3 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-e0d1f2c5-4 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+sessions=5 done=5 failed=0 incomplete=0 workers=2
 all session event chains verified
 ```
 

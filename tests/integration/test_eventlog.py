@@ -122,6 +122,31 @@ def test_concurrent_appends_still_verify(redis_client: Redis) -> None:
 
 
 @pytest.mark.integration
+def test_append_event_rejects_seq_discontinuity(redis_client: Redis) -> None:
+    session_id = _session_id()
+    log = EventLog(redis_client, session_id)
+    log.append(EventType.TASK_STARTED, {"goal": "demo"})
+
+    skipping = link(log.tail(), session_id, EventType.STEP_PLANNED, {}).model_copy(
+        update={"seq": 5}
+    )
+
+    with pytest.raises(ChainForkError):
+        log.append_event(skipping)
+    log.verify()
+    assert len(log.read()) == 1
+
+
+def test_eventlog_rejects_bytes_client() -> None:
+    client: Redis = Redis.from_url("redis://localhost:6399/0")
+    try:
+        with pytest.raises(ValueError, match="decode_responses"):
+            EventLog(client, _session_id())
+    finally:
+        client.close()
+
+
+@pytest.mark.integration
 def test_append_event_rejects_session_mismatch(redis_client: Redis) -> None:
     log = EventLog(redis_client, _session_id())
     foreign_event = link(None, _session_id(), EventType.TASK_STARTED, {"goal": "demo"})

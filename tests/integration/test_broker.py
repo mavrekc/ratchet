@@ -114,6 +114,16 @@ def test_publish_before_group_creation_still_delivered(redis_client: Redis) -> N
     assert messages[0].id == message_id
 
 
+def test_broker_rejects_bytes_client() -> None:
+    stream, group = _unique_names()
+    client: Redis = Redis.from_url("redis://localhost:6399/0")
+    try:
+        with pytest.raises(ValueError, match="decode_responses"):
+            RedisStreamsBroker(client, stream=stream, group=group)
+    finally:
+        client.close()
+
+
 @pytest.mark.integration
 def test_connection_failure_raises_broker_error() -> None:
     stream, group = _unique_names()
