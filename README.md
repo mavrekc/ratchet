@@ -13,8 +13,11 @@ sitting underneath whatever agent loop you already have.
 ## Status
 
 Early stage. The design is complete and implementation proceeds milestone by milestone (see
-Roadmap). The current focus is the session event log and a Redis Streams executor, both of which
-run with stubbed steps and no model calls.
+Roadmap). Milestone 1 has landed: the append-only hash-chained session event log (atomic
+compare-and-append, fork detection, full-chain verification) and the Redis Streams consumer-group
+executor (explicit XREADGROUP/XACK/PEL handling behind a thin broker interface), running stubbed
+steps with no model calls. Next up: checkpoint/resume with a `kill -9` chaos suite and a
+dead-letter stream.
 
 ## Architecture
 
@@ -66,13 +69,42 @@ real agent loop, tool layer, budgets, tracing, and additional brokers follow.
 7. Tracing and a Kafka event log.
 8. Deterministic replay exported as labeled trajectories.
 
+## Try it
+
+With a local Redis (`docker compose up -d redis`, which enables AOF persistence):
+
+```bash
+uv sync
+uv run python -m ratchet --sessions 5 --workers 2
+```
+
+Output from a real run - two workers drain five sessions from the consumer group, append each
+step's lifecycle to its session's hash-chained event log, and verify every chain:
+
+```
+INFO ratchet.executor session_id=demo-de329c4a-0 step_id=step-0 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-de329c4a-1 step_id=step-1 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-de329c4a-2 step_id=step-2 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-de329c4a-3 step_id=step-3 tool=echo outcome=ok
+INFO ratchet.executor session_id=demo-de329c4a-4 step_id=step-4 tool=echo outcome=ok
+session=demo-de329c4a-0 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-de329c4a-1 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-de329c4a-2 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-de329c4a-3 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+session=demo-de329c4a-4 chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+sessions=5 completed=5 workers=2
+all session event chains verified
+```
+
+Fully containerized, the same demo runs with `docker compose up --build app`.
+
 ## Development
 
 ```bash
 uv sync
-make check       # lint, typecheck, test
+docker compose up -d redis
+make check       # lint, typecheck, test (integration tests need the redis service)
 make docker-build
-docker compose up
 ```
 
 ## License

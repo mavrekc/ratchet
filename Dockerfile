@@ -7,4 +7,4 @@ COPY . .
 
 RUN uv sync --frozen --no-dev
 
-CMD ["python", "-c", "import ratchet; print(ratchet.__version__)"]
+CMD ["/app/.venv/bin/python", "-m", "ratchet"]

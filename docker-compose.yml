@@ -9,6 +9,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    # AOF persistence is the documented durability prerequisite (see SPEC risks)
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     healthcheck:
