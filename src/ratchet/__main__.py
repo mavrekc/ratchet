@@ -15,7 +15,7 @@ from redis import Redis
 from ratchet.brokers import RedisStreamsBroker
 from ratchet.eventlog import EventLog
 from ratchet.events import EventType
-from ratchet.executor import Worker, make_step_message
+from ratchet.executor import Worker, make_task_message
 
 
 def main() -> int:
@@ -39,7 +39,7 @@ def main() -> int:
 
     session_ids = [f"demo-{run_id}-{i}" for i in range(args.sessions)]
     for i, session_id in enumerate(session_ids):
-        message = make_step_message(session_id, f"step-{i}", "echo", {"n": i})
+        message = make_task_message(session_id, [(f"step-{i}", "echo", {"n": i})])
         broker.publish(message.to_fields())
 
     workers = [Worker(broker, redis, consumer=f"w{i}") for i in range(args.workers)]
