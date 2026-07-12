@@ -38,4 +38,5 @@ files = ["src"]
 testpaths = ["tests"]
 markers = [
     "integration: requires a running Redis (docker compose up -d redis)",
+    "chaos: kills real worker subprocesses with SIGKILL (requires Redis)",
 ]
