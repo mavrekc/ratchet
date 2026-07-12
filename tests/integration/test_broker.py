@@ -1,5 +1,6 @@
 """Integration tests for RedisStreamsBroker against a real Redis."""
 
+import time
 import uuid
 
 import pytest
@@ -138,5 +139,107 @@ def test_connection_failure_raises_broker_error() -> None:
     try:
         with pytest.raises(BrokerError):
             broker.publish({"tool": "noop"})
+    finally:
+        bad_client.close()
+
+
+@pytest.mark.integration
+def test_claim_reclaims_idle_unacked_message(redis_client: Redis) -> None:
+    stream, group = _unique_names()
+    broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
+    broker.ensure_group()
+    broker.publish({"tool": "noop"})
+
+    consumed = broker.consume("c1", block_ms=1000)
+    assert len(consumed) == 1
+
+    time.sleep(1.2)
+    claimed = broker.claim("c2", min_idle_ms=1000)
+
+    assert len(claimed) == 1
+    assert claimed[0].id == consumed[0].id
+    assert claimed[0].fields == consumed[0].fields
+
+    pending = redis_client.xpending_range(stream, group, min="-", max="+", count=10)
+    assert len(pending) == 1
+    assert pending[0]["consumer"] == "c2"
+
+
+@pytest.mark.integration
+def test_claim_skips_fresh_entries(redis_client: Redis) -> None:
+    stream, group = _unique_names()
+    broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
+    broker.ensure_group()
+    broker.publish({"tool": "noop"})
+
+    consumed = broker.consume("c1", block_ms=1000)
+    assert len(consumed) == 1
+
+    claimed = broker.claim("c2", min_idle_ms=5000)
+
+    assert claimed == []
+
+
+@pytest.mark.integration
+def test_claim_empty_pel_returns_empty(redis_client: Redis) -> None:
+    stream, group = _unique_names()
+    broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
+    broker.ensure_group()
+
+    claimed = broker.claim("c1", min_idle_ms=0)
+
+    assert claimed == []
+
+
+@pytest.mark.integration
+def test_claim_then_ack_clears_pel(redis_client: Redis) -> None:
+    stream, group = _unique_names()
+    broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
+    broker.ensure_group()
+    broker.publish({"tool": "noop"})
+    broker.consume("c1", block_ms=1000)
+
+    time.sleep(1.2)
+    claimed = broker.claim("c2", min_idle_ms=1000)
+    assert len(claimed) == 1
+
+    acked = broker.ack(claimed[0].id)
+    assert acked == 1
+
+    pending = redis_client.xpending(stream, group)
+    assert pending["pending"] == 0
+
+
+@pytest.mark.integration
+def test_claim_resets_idle_time(redis_client: Redis) -> None:
+    stream, group = _unique_names()
+    broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
+    broker.ensure_group()
+    broker.publish({"tool": "noop"})
+    broker.consume("c1", block_ms=1000)
+
+    time.sleep(1.2)
+    claimed = broker.claim("c2", min_idle_ms=1000)
+    assert len(claimed) == 1
+
+    reclaimed = broker.claim("c3", min_idle_ms=1000)
+
+    assert reclaimed == []
+
+
+@pytest.mark.integration
+def test_claim_connection_failure_raises_broker_error() -> None:
+    stream, group = _unique_names()
+    bad_client: Redis = Redis.from_url(
+        "redis://localhost:6399/0",
+        decode_responses=True,
+        socket_connect_timeout=0.2,
+        socket_timeout=0.2,
+    )
+    broker = RedisStreamsBroker(bad_client, stream=stream, group=group)
+
+    try:
+        with pytest.raises(BrokerError):
+            broker.claim("c1", min_idle_ms=1000)
     finally:
         bad_client.close()

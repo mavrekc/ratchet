@@ -16,6 +16,9 @@ DEFAULT_WORKER_GROUP = "ratchet:workers"
 # Shape XREADGROUP actually returns for a single stream, decoded to str.
 _RawStreamReply = list[tuple[str, list[tuple[str, dict[str, str]]]]]
 
+# Shape XAUTOCLAIM returns: (next_cursor, claimed_entries, deleted_ids), decoded to str.
+_RawAutoClaimReply = tuple[str, list[tuple[str, dict[str, str] | None]], list[str]]
+
 
 def _parse_stream_response(response: XReadGroupResponse) -> list[Message]:
     if not response:
@@ -26,6 +29,17 @@ def _parse_stream_response(response: XReadGroupResponse) -> list[Message]:
         for entry_id, fields in records:
             str_fields = {str(k): str(v) for k, v in fields.items()}
             messages.append(Message(id=str(entry_id), fields=str_fields))
+    return messages
+
+
+def _parse_autoclaim_response(response: list[object]) -> list[Message]:
+    _next_cursor, records, _deleted_ids = cast(_RawAutoClaimReply, response)
+    messages: list[Message] = []
+    for entry_id, fields in records:
+        if fields is None:
+            continue
+        str_fields = {str(k): str(v) for k, v in fields.items()}
+        messages.append(Message(id=str(entry_id), fields=str_fields))
     return messages
 
 
@@ -79,3 +93,17 @@ class RedisStreamsBroker:
             return self._redis.xack(self._stream, self._group, message_id)
         except (ConnectionError, TimeoutError) as e:
             raise BrokerError(f"broker unreachable: {e}") from e
+
+    def claim(self, consumer: str, min_idle_ms: int, count: int = 10) -> list[Message]:
+        try:
+            response = self._redis.xautoclaim(
+                name=self._stream,
+                groupname=self._group,
+                consumername=consumer,
+                min_idle_time=min_idle_ms,
+                start_id="0-0",
+                count=count,
+            )
+        except (ConnectionError, TimeoutError) as e:
+            raise BrokerError(f"broker unreachable: {e}") from e
+        return _parse_autoclaim_response(response)
