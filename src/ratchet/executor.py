@@ -220,11 +220,10 @@ class Worker:
                 for e in events
             )
             if completed:
-                if not any(c >= resume_cursor + 1 for c in checkpoint_cursors):
-                    log.append(
-                        EventType.CHECKPOINT,
-                        {"cursor": resume_cursor + 1, "completed_step_id": interrupted.step_id},
-                    )
+                log.append(
+                    EventType.CHECKPOINT,
+                    {"cursor": resume_cursor + 1, "completed_step_id": interrupted.step_id},
+                )
                 start = resume_cursor + 1
             else:
                 # Re-execute the interrupted step: safe on side-effect-free stubs; the
@@ -271,6 +270,8 @@ class Worker:
         )
 
     def _handle_poison(self, message: Message, error: Exception) -> None:
+        # Never write to the session log here: a corrupt message carrying a live
+        # session's id must not inject a terminal marker into that session.
         session_id = message.fields.get("session_id", "")
         events: list[Event] = []
         if session_id:
@@ -285,9 +286,5 @@ class Worker:
             events=events,
             original=dict(message.fields),
         )
-        if session_id:
-            EventLog(self._redis, session_id).append(
-                EventType.STEP_FAILED, {"error": str(error), "error_type": "validation"}
-            )
         self._broker.ack(message.id)
         logger.warning("poison message id=%s error=%s", message.id, error)

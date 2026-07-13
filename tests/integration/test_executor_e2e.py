@@ -189,9 +189,7 @@ def test_poison_message_to_dlq(redis_client: Redis) -> None:
     assert by_session[session_id].original == with_session
     assert by_session[""].original == no_session
 
-    session_events = EventLog(redis_client, session_id).read()
-    assert [e.type for e in session_events] == [EventType.STEP_FAILED]
-    assert session_events[0].payload["error_type"] == "validation"
+    assert EventLog(redis_client, session_id).read() == []
     assert not redis_client.exists("ratchet:log:")
     assert redis_client.xpending(stream, group)["pending"] == 0
 

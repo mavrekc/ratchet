@@ -204,7 +204,7 @@ def test_reclaim_terminal_task_just_acks(redis_client: Redis) -> None:
 
 
 @pytest.mark.integration
-def test_requeue_then_resume_skips_completed(redis_client: Redis) -> None:
+def test_requeue_terminal_session_raises_and_keeps_entry(redis_client: Redis) -> None:
     stream, group = _unique_names()
     session_id = _session_id()
     broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
@@ -224,15 +224,58 @@ def test_requeue_then_resume_skips_completed(redis_client: Redis) -> None:
     assert _count(log.read(), EventType.STEP_FAILED) == 1
     entries = dlq.entries()
     assert len(entries) == 1
-
     length_before = len(log.read())
+
+    with pytest.raises(ValueError, match="already terminal"):
+        dlq.requeue(entries[0].id, broker)
+
+    assert len(dlq.entries()) == 1
+    assert len(log.read()) == length_before
+    assert broker.consume("probe", block_ms=100) == []
+
+
+@pytest.mark.integration
+def test_requeue_then_resume_skips_completed(redis_client: Redis) -> None:
+    stream, group = _unique_names()
+    session_id = _session_id()
+    broker = RedisStreamsBroker(redis_client, stream=stream, group=group)
+    broker.ensure_group()
+    msg = make_task_message(session_id, _echo_plan(3))
+
+    log = EventLog(redis_client, session_id)
+    log.append(EventType.TASK_STARTED, {})
+    _planned(log, msg.plan[0])
+    _called(log, msg.plan[0])
+    _result(log, msg.plan[0])
+    _checkpoint(log, 1, msg.plan[0])
+
+    dlq = _dlq(redis_client)
+    dlq.push(
+        session_id=session_id,
+        step_id="step-1",
+        tool="echo",
+        error="worker lost before terminal marker",
+        error_type="BrokerError",
+        attempt=0,
+        events=log.read(),
+        original=msg.to_fields(),
+    )
+    entries = dlq.entries()
+    assert len(entries) == 1
+
     dlq.requeue(entries[0].id, broker)
     assert dlq.entries() == []
 
+    worker = Worker(broker, redis_client, "w1", dlq=dlq)
     assert worker.run_once(block_ms=1000) == 1
 
-    assert len(log.read()) == length_before
-    assert _count(log.read(), EventType.TASK_DONE) == 0
+    events = log.read()
+    resumed = next(e for e in events if e.type == EventType.RESUMED)
+    assert resumed.payload["cursor"] == 1
+    assert _count(events, EventType.TOOL_CALLED, "step-0") == 1
+    assert _count(events, EventType.TOOL_RESULT, "step-1") == 1
+    assert _count(events, EventType.TOOL_RESULT, "step-2") == 1
+    assert _count(events, EventType.TASK_DONE) == 1
     assert redis_client.xpending(stream, group)["pending"] == 0
 
 

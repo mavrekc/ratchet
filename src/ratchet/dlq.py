@@ -1,6 +1,7 @@
 """Dead-letter queue: failed steps parked with event-slice context, inspectable and requeueable."""
 
 import json
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -11,9 +12,12 @@ from redis.typing import EncodableT, FieldT
 
 from ratchet.broker import Broker
 from ratchet.errors import BrokerError
-from ratchet.events import Event
+from ratchet.eventlog import EventLog
+from ratchet.events import Event, EventType
 
 DEFAULT_DLQ_STREAM = "ratchet:dlq"
+
+logger = logging.getLogger("ratchet.dlq")
 
 
 @dataclass(frozen=True)
@@ -80,7 +84,14 @@ class DeadLetterQueue:
             raw = self._redis.xrange(self._stream, count=count)
         except (ConnectionError, TimeoutError) as e:
             raise BrokerError(f"broker unreachable: {e}") from e
-        return [self._parse_entry(entry_id, fields) for entry_id, fields in raw or []]
+        parsed: list[DeadLetterEntry] = []
+        for entry_id, fields in raw or []:
+            # One malformed record must not block listing; it stays in the stream.
+            try:
+                parsed.append(self._parse_entry(entry_id, fields))
+            except ValueError as e:
+                logger.warning("skipping malformed dead-letter entry: %s", e)
+        return parsed
 
     def requeue(self, entry_id: str, broker: Broker) -> str:
         try:
@@ -91,6 +102,14 @@ class DeadLetterQueue:
             raise ValueError(f"no dead-letter entry with id {entry_id!r}")
         found_id, fields = raw[0]
         entry = self._parse_entry(found_id, fields)
+        # The executor acks terminal sessions without running anything, so a requeue
+        # would only destroy the failure record; refuse it (retry policies land in R3).
+        session_events = EventLog(self._redis, entry.session_id).read()
+        if any(e.type in (EventType.TASK_DONE, EventType.STEP_FAILED) for e in session_events):
+            raise ValueError(
+                f"session {entry.session_id!r} is already terminal; requeue would change "
+                f"nothing, dead-letter entry {entry_id!r} kept"
+            )
         new_id = broker.publish(entry.original)
         try:
             self._redis.xdel(self._stream, entry_id)

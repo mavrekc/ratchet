@@ -144,13 +144,37 @@ def test_requeue_missing_entry_raises(redis_client: Redis) -> None:
 
 
 @pytest.mark.integration
-def test_entries_malformed_raises(redis_client: Redis) -> None:
+def test_entries_skips_malformed_and_keeps_them(redis_client: Redis) -> None:
+    dlq_stream = _unique_stream()
+    dlq = DeadLetterQueue(redis_client, stream=dlq_stream)
+    redis_client.xadd(dlq_stream, {"garbage": "yes"})
+    good_id = dlq.push(
+        session_id=_session_id(),
+        step_id="s1",
+        tool="echo",
+        error="boom",
+        error_type="RuntimeError",
+        attempt=0,
+        events=[],
+        original={"session_id": "x", "plan": "[]"},
+    )
+
+    listed = dlq.entries()
+    assert [e.id for e in listed] == [good_id]
+    assert redis_client.xlen(dlq_stream) == 2
+
+
+@pytest.mark.integration
+def test_requeue_malformed_entry_raises(redis_client: Redis) -> None:
+    from ratchet.brokers import RedisStreamsBroker
+
     dlq_stream = _unique_stream()
     dlq = DeadLetterQueue(redis_client, stream=dlq_stream)
     entry_id = redis_client.xadd(dlq_stream, {"garbage": "yes"})
+    broker = RedisStreamsBroker(redis_client, stream=f"test:steps:{uuid.uuid4().hex}")
 
     with pytest.raises(ValueError, match=entry_id):
-        dlq.entries()
+        dlq.requeue(entry_id, broker)
 
 
 @pytest.mark.integration
