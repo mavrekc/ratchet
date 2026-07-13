@@ -7,4 +7,4 @@ COPY . .
 
 RUN uv sync --frozen --no-dev
 
-CMD ["/app/.venv/bin/python", "-m", "ratchet"]
+CMD ["/app/.venv/bin/python", "-m", "ratchet", "demo"]
