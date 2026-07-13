@@ -13,11 +13,15 @@ sitting underneath whatever agent loop you already have.
 ## Status
 
 Early stage. The design is complete and implementation proceeds milestone by milestone (see
-Roadmap). Milestone 1 has landed: the append-only hash-chained session event log (atomic
-compare-and-append, fork detection, full-chain verification) and the Redis Streams consumer-group
-executor (explicit XREADGROUP/XACK/PEL handling behind a thin broker interface), running stubbed
-steps with no model calls. Next up: checkpoint/resume with a `kill -9` chaos suite and a
-dead-letter stream.
+Roadmap). Milestones 1 and 2 have landed: the append-only hash-chained session event log (atomic
+compare-and-append, fork detection, full-chain verification); the Redis Streams consumer-group
+executor (explicit XREADGROUP/XACK/PEL handling behind a thin broker interface); multi-step task
+plans with a checkpoint event after every completed step; log-derived resume, where a second
+worker claims (XAUTOCLAIM) a task abandoned by a killed worker and finishes it without re-running
+completed steps; a dead-letter stream for failed steps, inspectable and requeueable; and a chaos
+test suite that kills real worker subprocesses with SIGKILL mid-step and measures recovery time.
+Steps are still stubbed, with no model calls. Next up: idempotency-key enforcement, retry
+policies, and a backpressure governor.
 
 ## Architecture
 
@@ -69,29 +73,60 @@ real agent loop, tool layer, budgets, tracing, and additional brokers follow.
 7. Tracing and a Kafka event log.
 8. Deterministic replay exported as labeled trajectories.
 
-## Try it
+## Try it: kill -9 a worker mid-task
 
 With a local Redis (`docker compose up -d redis`, which enables AOF persistence):
 
 ```bash
 uv sync
-uv run python -m ratchet --sessions 5 --workers 2
+uv run python -m ratchet chaos
 ```
 
-Output from a real run - two workers drain five sessions from the consumer group, append each
-step's lifecycle to its session's hash-chained event log, and verify every chain:
+The chaos showcase publishes one task with a three-step plan (fetch, transform, save), starts a
+worker, and kills it with SIGKILL in the middle of the transform step - no shutdown hook, no
+cleanup, the same failure a crashed pod or an OOM kill produces. A second worker claims the
+abandoned message from the consumer group's pending list once it has sat idle past the visibility
+timeout (`min_idle_ms=1000` here), replays the session event log, and resumes from the last
+checkpoint. Output from a real run:
 
 ```
-INFO ratchet.executor session_id=demo-e0d1f2c5-0 step_id=step-0 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-e0d1f2c5-1 step_id=step-1 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-e0d1f2c5-2 step_id=step-2 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-e0d1f2c5-3 step_id=step-3 tool=echo outcome=ok
-INFO ratchet.executor session_id=demo-e0d1f2c5-4 step_id=step-4 tool=echo outcome=ok
-session=demo-e0d1f2c5-0 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-e0d1f2c5-1 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-e0d1f2c5-2 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-e0d1f2c5-3 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
-session=demo-e0d1f2c5-4 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,task_done
+ratchet worker ready consumer=w1 pid=9776
+killed worker consumer=w1 pid=9776 mid-step (transform)
+ratchet worker ready consumer=w2 pid=9777
+INFO ratchet.executor session_id=chaos-c01ddc73 consumer=w2 steps=3 outcome=ok resumed=yes
+chain=task_started,step_planned,tool_called,tool_result,checkpoint,step_planned,tool_called,resumed,step_planned,tool_called,tool_result,checkpoint,step_planned,tool_called,tool_result,checkpoint,task_done
+resumed payload={'cursor': 1, 'consumer': 'w2'}
+recovery_seconds=3.07
+chain verified
+pending=0
+```
+
+Reading the chain: fetch completes and checkpoints; transform's `tool_called` is the last event
+the first worker wrote before dying; `resumed` marks the second worker taking over at cursor 1,
+re-running only the interrupted transform step (fetch is not re-run) and continuing through save
+to `task_done`. Recovery took 3.07 seconds, most of it the 1-second idle threshold plus re-running
+the 2-second transform step. The hash chain verifies end to end and the pending list is empty. The
+same scenario runs as an automated chaos suite (part of `make check`) that kills real worker
+subprocesses and asserts every completed step ran exactly once.
+
+The multi-session demo drains five single-step sessions with two workers, appends each step's
+lifecycle to its session's hash-chained event log, and verifies every chain:
+
+```bash
+uv run python -m ratchet demo --sessions 5 --workers 2
+```
+
+```
+INFO ratchet.executor session_id=demo-dc607506-0 consumer=w0 steps=1 outcome=ok resumed=no
+INFO ratchet.executor session_id=demo-dc607506-1 consumer=w0 steps=1 outcome=ok resumed=no
+INFO ratchet.executor session_id=demo-dc607506-2 consumer=w0 steps=1 outcome=ok resumed=no
+INFO ratchet.executor session_id=demo-dc607506-3 consumer=w0 steps=1 outcome=ok resumed=no
+INFO ratchet.executor session_id=demo-dc607506-4 consumer=w0 steps=1 outcome=ok resumed=no
+session=demo-dc607506-0 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,checkpoint,task_done
+session=demo-dc607506-1 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,checkpoint,task_done
+session=demo-dc607506-2 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,checkpoint,task_done
+session=demo-dc607506-3 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,checkpoint,task_done
+session=demo-dc607506-4 status=done chain=verified events=task_started,step_planned,tool_called,tool_result,checkpoint,task_done
 sessions=5 done=5 failed=0 incomplete=0 workers=2
 all session event chains verified
 ```
